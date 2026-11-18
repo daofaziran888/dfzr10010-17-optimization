@@ -1,4 +1,6 @@
-"""表统计信息接口：维护统计报告，覆盖采集统计、标记过期、清理报告等动作。"""
+"""表统计信息接口：维护统计报告，覆盖采集统计、标记过期、清理报告等动作，
+并提供合并收益统计报告（接小文件合并结果数据集）。
+"""
 from __future__ import annotations
 
 from typing import Any
@@ -30,6 +32,19 @@ def list_entries(
     return PageResult(items=items, total=total, page=page, size=size)
 
 
+@router.get("/export")
+def export_entries() -> dict[str, Any]:
+    """导出表统计信息清单：返回当前过滤条件下的全量数据。"""
+    items, total = service.list_entries(page=1, size=10000)
+    return {"module": "stats", "total": total, "items": items}
+
+
+@router.get("/compact-report")
+def compact_report() -> dict[str, Any]:
+    """合并收益统计报告：接同一版本合并结果数据集，按成功分组汇总收益。"""
+    return service.compact_report()
+
+
 @router.get("/{entry_id}", response_model=dict)
 def get_entry(entry_id: int) -> dict:
     """读取单条统计报告明细；不存在时给出可读的错误说明。"""
@@ -56,10 +71,3 @@ def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
     if entry is None:
         return ActionResult(ok=False, message=message)
     return ActionResult(ok=True, message=message, entry=entry)
-
-
-@router.get("/export")
-def export_entries() -> dict[str, Any]:
-    """导出表统计信息清单：返回当前过滤条件下的全量数据。"""
-    items, total = service.list_entries(page=1, size=10000)
-    return {"module": "stats", "total": total, "items": items}

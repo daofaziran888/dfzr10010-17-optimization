@@ -66,6 +66,46 @@ npm run dev
 | 表统计信息 | `stats` | 统计报告 | 报告编号、表名称、行总数 |
 | 数据迁移管理 | `migrate` | 迁移任务 | 任务编号、源表名、目标表名 |
 
+## 小文件合并：结果数据集与收益复核
+
+小文件合并除了任务清单，还维护一份**合并任务结果数据集**（`compact_dataset/v1`），
+把分片、分组边界和收益记账固定下来，供合并列表与表统计信息两个入口共用。
+
+- 分组计划：读取任务的文件范围与分片统计后，按分区顺序做 next-fit 切分，
+  每组记录 `起始分片`/`结束分片` 与分区内序号。例如 `orders` 240 个分片、
+  64MB 目标大小 → 58 组，分片大小 P50=9MB、P95=21MB。
+- 续跑：分组边界生成后不再改变。失败组重试、中断续跑都从**原分片边界**继续，
+  已成功的组跳过，不会重复处理或重复计数。
+- 收益记账：每成功一组往台账写一条，同一个分组身份（分区 + 起始分片 + 结束分片）
+  只记一次；复核清单与统计报告都只从台账汇总。
+- 文件范围扩展：
+  - `append`：保留原分组边界，只给新增分片排组，旧完成组收益继续有效；
+  - `replan`：按当前范围重排，边界未变的旧完成组继承收益，被覆盖掉的记为
+    “过期完成项”并从台账剔除，复核清单最终只保留一次有效收益。
+- 空组：分区没有分片、分片容量为 0、或单分片未超目标大小时单独标记，
+  写明原因，不参与收益累计。
+- 表统计信息 `GET /api/stats/compact-report`：先声明兼容目标
+  （`compact_dataset/v1` 必需字段），再读取结果数据集，按成功分组汇总
+  文件数量下降与容量下降；读取失败时只重试该任务未完成的分组，
+  仍失败则退回上一稳定口径并在 `本次错误` 里说明。
+
+主要接口（`backend/app/routers/compact.py`）：
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/compact/datasets` | 合并任务结果数据集列表 |
+| POST | `/api/compact/datasets/generate` | 读取现有任务补生成结果数据集（幂等） |
+| GET | `/api/compact/datasets/{task_id}` | 收益详情：已完成组、失败组、剩余组、空组说明、账本 |
+| POST | `/api/compact/datasets/{task_id}/run` | 执行未完成分组，可指定 `group_ids` 重试单个组 |
+| POST | `/api/compact/datasets/{task_id}/resume` | 从剩余分片续跑 |
+| POST | `/api/compact/datasets/{task_id}/interrupt` | 中断当前执行 |
+| POST | `/api/compact/datasets/{task_id}/scope` | 文件范围扩展（`append` / `replan`） |
+| GET | `/api/compact/reviews` | 收益复核清单（一个任务一条） |
+| POST | `/api/compact/reviews/{task_id}/reconcile` | 复核结果数据集并同步复核清单 |
+| GET | `/api/stats/compact-report` | 合并收益统计报告 |
+
+后端用例：`cd backend && .venv/bin/python -m unittest discover -s tests -v`。
+
 ## 约定
 
 - 每个模块的前端页面在 `frontend/src/views/<模块>/index.vue`，后端接口在

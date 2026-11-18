@@ -18,6 +18,59 @@
       </article>
     </div>
 
+    <section class="panel" data-panel="compact-report">
+      <header class="panel-head">
+        <div>
+          <h3>合并收益统计报告</h3>
+          <p class="panel-desc">
+            接入 {{ report?.兼容目标?.dataset_version ?? 'compact_dataset/v1' }} 结果数据集，
+            按成功分组汇总文件数量下降与容量下降；单个分组只累计一次。
+          </p>
+        </div>
+        <div class="page-actions">
+          <button class="btn" type="button" @click="loadReport">刷新统计报告</button>
+        </div>
+      </header>
+      <p v-if="report" class="hint">
+        口径：{{ report.口径 }} · 任务数 {{ report.task_count ?? report.tasks?.length ?? 0 }}
+        <template v-if="report.重试任务 && report.重试任务.length"> · 本次重试未完成项：{{ report.重试任务.join('、') }}</template>
+        <template v-if="report.本次错误 && report.本次错误.length"> · 读取问题：{{ report.本次错误.join('；') }}</template>
+      </p>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>任务编号</th><th>目标表名</th><th>结果数据集</th><th>范围版本</th><th>状态</th>
+            <th>分片(P50/P95)</th><th>分组</th><th>成功分组</th><th>空分组</th>
+            <th>文件数量下降</th><th>容量下降(MB)</th><th>复核批次</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="task in report?.tasks ?? []" :key="task.任务编号">
+            <td>{{ task.任务编号 }}</td>
+            <td>{{ task.目标表名 }}</td>
+            <td>{{ task.dataset_id }}</td>
+            <td>{{ task.范围版本 }}</td>
+            <td>{{ task.状态 }}</td>
+            <td>{{ task.分片统计?.P50MB }} / {{ task.分片统计?.P95MB }}MB</td>
+            <td>{{ task.分组总数 }}</td>
+            <td>{{ task.成功分组 }}</td>
+            <td>{{ task.空分组 }}</td>
+            <td>{{ task.文件数量下降 }}</td>
+            <td>{{ task.容量下降MB }}</td>
+            <td>{{ task.复核批次 ?? '—' }}</td>
+          </tr>
+          <tr v-if="!report?.tasks?.length">
+            <td colspan="12" class="empty-state">暂无合并收益数据，可先到小文件合并执行合并</td>
+          </tr>
+        </tbody>
+      </table>
+      <p v-if="report" class="hint">
+        合计：文件数量下降 {{ report.totals?.文件数量下降 ?? 0 }}，
+        容量下降 {{ report.totals?.容量下降MB ?? 0 }}MB，
+        成功分组 {{ report.totals?.成功分组 ?? 0 }} 个。
+      </p>
+    </section>
+
     <form class="filter-bar" @submit.prevent="reload">
       <label v-for="field in filterFields" :key="field" class="filter-item">
         <span>{{ field }}</span>
@@ -69,6 +122,30 @@ import { request } from '@/api/client'
 
 type Row = Record<string, string | number | null>
 
+type CompactReport = {
+  口径: string
+  dataset_version?: string
+  兼容目标?: { dataset_version: string; required_fields: string[]; aggregate_by: string }
+  task_count?: number
+  tasks: {
+    任务编号: string
+    目标表名: string
+    dataset_id: string
+    范围版本: string
+    状态: string
+    分片统计?: Record<string, number>
+    分组总数: number
+    成功分组: number
+    空分组: number
+    文件数量下降: number
+    容量下降MB: number
+    复核批次?: number
+  }[]
+  totals?: Record<string, number>
+  重试任务?: number[]
+  本次错误?: string[]
+}
+
 const ENDPOINT = '/api/stats'
 const columns = ["报告编号", "表名称", "行总数", "文件总数", "总容量", "列统计", "统计时间", "报告状态"]
 const actions = ["采集统计", "标记过期", "清理报告"]
@@ -77,9 +154,20 @@ const stats = [{"label": "统计报告总数", "value": 0}, {"label": "已采集
 
 const rows = ref<Row[]>([])
 const total = ref(0)
+const report = ref<CompactReport | null>(null)
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
+
+async function loadReport() {
+  try {
+    const response = await request(`${ENDPOINT}/compact-report`)
+    if (!response.ok) throw new Error('合并收益统计报告读取失败')
+    report.value = (await response.json()) as CompactReport
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '合并收益统计报告读取失败'
+  }
+}
 
 function resetFilters() {
   filters.value = {}
@@ -126,5 +214,8 @@ async function reload() {
   }
 }
 
-onMounted(reload)
+onMounted(() => {
+  void reload()
+  void loadReport()
+})
 </script>
